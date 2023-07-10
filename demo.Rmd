@@ -1,7 +1,6 @@
 ---
 title: "A toy example"
 output: html_document
-date: "2023-06-30"
 ---
 
 ```{r packages, echo=FALSE,include=FALSE}
@@ -11,7 +10,6 @@ library(foreach)
 library(kableExtra)
 library(table1)
 
-setwd("C:\\Users\\willi\\OneDrive - Yale University\\Desktop\\research\\ps_mem\\code")
 source("mem functions.R")
 source("hybrid trial analysis.R")
 
