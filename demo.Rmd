@@ -1,0 +1,168 @@
+---
+title: "A toy example"
+output: html_document
+date: "2023-06-30"
+---
+
+```{r packages, echo=FALSE,include=FALSE}
+rm(list=ls(all=TRUE))
+library(RBesT)
+library(foreach)
+library(kableExtra)
+library(table1)
+
+setwd("C:\\Users\\willi\\OneDrive - Yale University\\Desktop\\research\\ps_mem\\code")
+source("mem functions.R")
+source("hybrid trial analysis.R")
+
+load("toy.RData")
+```
+
+Suppose there is a hypothetical trial randomizing a total of 90 patients in 2:1 ratio to the treatment and standard of care (SOC) arm. Assume there is an external control with a sample size of 100. The table below summarizes the pretreatment characteristics of the internal and external control group (IC vs EC). 
+```{r, echo=FALSE, include=TRUE}
+ctr_dta <- dta[dta$trt ==0, ]
+ctr_dta2 <- ctr_dta
+
+ctr_dta2$sex <- factor(ctr_dta$sex, levels=c(1,0), labels=c("Male", "Female"))
+ctr_dta2$race <- factor(ctr_dta$race, levels=c(1,0), labels=c("Caucasian", "Non-Caucasian"))
+ctr_dta2$ras <- factor(ctr_dta$ras, levels=c(1,0), labels=c("Mutation", "WT"))
+ctr_dta2$liver_met <- factor(ctr_dta$liver_met, levels=c(1,0), labels=c("Yes", "No"))
+ctr_dta2$source <- factor(ctr_dta$source, levels=c(1,0), labels=c("IC", "EC"))
+ctr_dta2$ecog <- factor(ctr_dta$ecog, levels=c(1,0), labels=c("1", "0"))
+
+label(ctr_dta2$sex) <- "Sex"
+label(ctr_dta2$age) <- "Age"
+label(ctr_dta2$race) <- "Race"
+label(ctr_dta2$ras) <- "RAS"
+label(ctr_dta2$ecog) <- "ECOG"
+label(ctr_dta2$liver_met) <- "Liver Metastasis"
+
+units(ctr_dta2$age) <- "years"
+
+table1(~ sex + age + race + ras + ecog+liver_met| factor(source), data = ctr_dta2,
+       topclass="Rtable1-zebra")
+```
+
+
+
+
+Implement weighting to improve covariate balance. EC patients are reweighted to produce pseudo-samples with similar pretreatment characteristics as IC. 
+```{r, echo=TRUE, include=TRUE}
+## observed confounders
+Cname <- names(dta)[2:7]
+## propensity score model
+ps_fm <- as.formula(paste("source ~ ", paste(Cname, collapse = "+")))
+
+ps_mod <- glm(ps_fm, data = ctr_dta, family = binomial)
+ps <- predict(ps_mod, newdata = ctr_dta, type = "response")
+# These weights are used to reweight patients in EC 
+# to produce pseudo-samples with similar pre-treatment characteristics
+ctr_dta$wt <- ifelse(ctr_dta$source == 1, 1, ps/(1-ps))
+
+sums <- aggregate(ctr_dta[, 2:7]*ctr_dta$wt, by = list(ctr_dta$source), sum)
+wn <- aggregate(ctr_dta$wt, by = list(ctr_dta$source), sum)
+after_weighting <- round(sums[, 2:7]/wn$x, 2)
+
+rownames(after_weighting) <- c("EC", "IC")
+names(after_weighting) <- c("Age", "Sex", "Race", "ECOG", "RAS", "Liver Metastasis")
+after_weighting %>%
+  kbl(caption = "Mean of Pretreatment characteristics after weighting") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+```
+
+
+Calculate the number of responders for the weighted EC and IC.
+```{r, echo=TRUE, include=TRUE}
+# load external control data
+EC <- ctr_dta[ctr_dta$source==0, ]
+
+# load internal control data
+IC <- ctr_dta[ctr_dta$source==1, ]
+
+EC_wy <- EC$wt%*%EC$response
+EC_wn <- sum(EC$wt)
+
+IC_y <- sum(IC$response)
+IC_n <- nrow(IC)
+```
+
+Calculate the number of responders for the treatment arm.
+```{r, echo=TRUE, include=TRUE}
+IT <- dta[dta$trt==1, ]
+IT_y <- sum(IT$response)
+IT_n <- nrow(IT)
+```
+
+The posterior density for the probability of response associated with the internal control (IC), external control (EC), 
+weighted EC, and treatment group. After weighting, the posterior density of weighted EC and IC becomes more similar. 
+```{r, echo=TRUE, include=TRUE}
+p <- seq(0, 1, 0.001)
+den_ec <- dbeta(p, 0.5+sum(EC$response), 0.5+nrow(EC)-sum(EC$response))
+den_wec <- dbeta(p, 0.5+EC_wy, 0.5+EC_wn-EC_wy)
+den_ic <- dbeta(p, 0.5+IC_y, 0.5+IC_n-IC_y)
+den_trt <- dbeta(p, 0.5+IT_y, 0.5+IT_n-IT_y)
+
+par(mfrow = c(1, 1))
+plot(p, den_ic, col = 1, type = "l", ylim = c(0, 10), las = 1, lwd = 2, 
+     xlab = "Probability of response", ylab = "Density")
+lines(p, den_ec, col = 2, lwd = 2)
+lines(p, den_wec, col = 2, lty = 2, lwd = 2)
+lines(p, den_trt, col = 3, lwd = 2)
+
+legend("topright", lty = c(1, 1, 2, 1), col = c(1, 2, 2, 3), 
+       c("IC", "EC", "Weighted-EC", "Treatment"), bty = "n")
+```
+
+
+Evaluate the similarity in outcome distributions between IC and EC:
+```{r, echo=TRUE, include=TRUE}
+prior_delta <- 0
+fit0 <- set.mem.prior(num_study = 2, delta = prior_delta)
+fit0$prior
+
+mem_fit <- update.part.bin(x = c(IC_y, EC_wy), 
+                       n = c(IC_n, EC_wn), 
+                       prior_part = fit0$prior, 
+                       part = fit0$part)
+
+mem_fit$post_sim
+```
+
+Borrow external data according to the similarity between the outcome distribution of weighted-EC and IC. 
+The number of responders we borrow from EC is
+```{r, echo=TRUE, include=TRUE}
+EC_wy*mem_fit$post_part[1]
+```
+
+The number of patients we borrow from EC is
+```{r, echo=TRUE, include=TRUE}
+EC_wn*mem_fit$post_part[1]
+```
+
+
+```{r, echo=TRUE, include=TRUE}
+#hybrid control trial based on MEM
+hc_mem <- bayes.two.prop(y0 = IC_y + EC_wy*mem_fit$post_part[1], 
+                      n0 = IC_n + EC_wn*mem_fit$post_part[1], 
+                      y1 = IT_y, n1 = IT_n,
+                      prior0 = c(0.5, 0.5), 
+                      prior1 = c(0.5, 0.5))
+
+
+IN_test <- bayes.two.prop(y0 = IC_y, n0 = IC_n, 
+               y1 = IT_y, n1 = IT_n,
+               prior0 = c(0.5, 0.5), 
+               prior1 = c(0.5, 0.5))
+
+posterior_summary <- rbind(c(hc_mem$est, hc_mem$ci, hc_mem$pp), c(IN_test$est, IN_test$ci, IN_test$pp))
+rownames(posterior_summary) <- c("PW-MEM", "IN_test")
+colnames(posterior_summary) <- c("Median", "2.5%CI", "97.5%CI", "PP")
+
+round(posterior_summary, 3) %>%
+  kbl(caption = "Posterior summary for the difference in probability of responese") %>%
+  kable_classic(full_width = F, html_font = "Cambria") %>%
+  footnote(general = "PW-MEM: analysis based on the hybrid control constructed using MEM and propensity score weighting; 
+           IN_test: analysis based on the internal control without borrowing from EC;
+           PP: posterior probability of the treatment arm having a higher probability of response")
+
+```
