@@ -88,25 +88,3 @@ gaussian.mar <- function(y, source, wt){
   list("mden" = d, "ybar" = ybar, "sd" = s, "n" = n)
 }
 
-
-##alex's method
-calc.mar <- function(y, source, wt){
-  n <- ybar <- s <- yss <- mden <- v <- NULL
-  for(i in 0:1){
-    n[i+1] <- sum(wt[source==i])
-    ybar[i+1] <- sum(y[source==i]*wt[source==i])/n[i+1]
-    yss[i+1] <- sum(y[source==i]^2*wt[source==i])
-    s[i+1] <- sqrt((wt[source==i]%*%c(y[source==i]-ybar[i+1])^2)/(n[i+1]-1))
-    v[i+1] <- s[i+1]^2/n[i+1]
-  }
-  ## marginal probability 
-  mden[1] <- sqrt(2*pi)^1 / sqrt((1/v[1] + 1/v[2])) * exp(-0.5 * ((ybar[1]-ybar[2])^2/(v[1] + v[2])) )
-  mden[2] <- sqrt(2*pi)^2 / sqrt(1/(v[1]*v[2]))
-  #num <- n^(-0.5)
-  #den <- (s^(n-1))*(2*pi)^(0.5*(n-1))
-  #(num/den)*exp( (-yss+n*ybar^2)/(2*s^2) )
-  #m1 <- calc.mar(y)
-  #m2 <- calc.mar(y[source==1])*calc.mar(y[source==0])
-  #c(m1, m2)*fit0$prior/sum(c(m1, m2)*fit0$prior)
-  list("mden" = mden, "ybar" = ybar, "sd" = s, "n" = n)
-}
